@@ -1,0 +1,36 @@
+{
+  "repo": 1,
+  "name": "electron-slim-kit",
+  "what": "Finds the packages an Electron installer ships for nothing, proposes the smallest package.json fix, and checks the packed app.asar afterwards.",
+  "kind": "kit",
+  "work": {
+    "guide": "README.md",
+    "test": "npm test"
+  },
+  "offers": [
+    {
+      "id": "audit",
+      "what": "Lists which production dependencies an Electron app's main process actually loads and which ship for nothing, with sizes. Use before a release or when an installer is too big. Reads files only; the main entry must already be built.",
+      "how": "cli",
+      "cli": "npx github:Jeffrey0117/electron-slim-kit audit <project> [--entry <file>] [--json]"
+    },
+    {
+      "id": "fix",
+      "what": "Shows the smallest package.json change that stops shipping unused packages (move to devDependencies, or exclude node_modules when the main process is a self-contained bundle). Writes only with --write.",
+      "how": "cli",
+      "cli": "npx github:Jeffrey0117/electron-slim-kit fix <project> [--write]"
+    },
+    {
+      "id": "verify",
+      "what": "After packing, checks that app.asar contains only what the main process loads. Exits 1 if something shipped for nothing or a loaded package is missing, so it can gate a release.",
+      "how": "cli",
+      "cli": "npx github:Jeffrey0117/electron-slim-kit verify <project> [--asar <app.asar>] [--json]"
+    },
+    {
+      "id": "library",
+      "what": "The same audit, fix plan and archive check as functions, for build scripts: auditProject, planFix, applyFix, inspectAsar, verifyPackage, findPackedAsar. planFix is pure and returns a new package.json object.",
+      "how": "import",
+      "import": "const { auditProject, planFix, applyFix, verifyPackage, findPackedAsar } = require('electron-slim-kit')"
+    }
+  ]
+}

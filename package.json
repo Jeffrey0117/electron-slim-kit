@@ -1,0 +1,34 @@
+{
+  "name": "electron-slim-kit",
+  "version": "0.1.0",
+  "description": "Find and remove production dependencies an Electron installer ships for nothing (renderer-only packages already bundled by vite/esbuild): audit, fix, verify the packed asar. Zero-dependency CLI.",
+  "main": "index.js",
+  "bin": {
+    "electron-slim": "cli.js"
+  },
+  "files": [
+    "index.js",
+    "cli.js",
+    "README.md",
+    "SKILL.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test.js",
+    "example": "node example.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "electron",
+    "electron-builder",
+    "asar",
+    "bundle-size",
+    "dependencies",
+    "installer-size",
+    "node_modules"
+  ],
+  "author": "Jeffrey0117",
+  "license": "MIT"
+}
