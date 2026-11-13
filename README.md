@@ -14,7 +14,8 @@ Real results from the projects it was built on:
 | App | Before | What it found |
 |---|---|---|
 | A desktop client whose main process is one esbuild bundle | `app.asar` 28 MB, 183 packages | Nothing was loaded from `node_modules`. After the fix: 0.5 MB, 0 packages |
-| A video app with an unbundled main process | 43 packages packed | 9 of them (13.6 MB) were renderer-only |
+| A video app with an unbundled main process | 5 renderer packages under `dependencies` | They pulled 67 packages (75.5 MB) into the installer that nothing loads |
+| A small viewer where vite and the packager both wrote to `dist/` | `app.asar` 268 MB | Every build packed the previous build — the whole runtime — into itself. After: 0.2 MB |
 
 ## Use it
 
@@ -57,6 +58,10 @@ Then it picks one of two fixes:
 |---|---|
 | The main process loads **no** package (it is a self-contained bundle) | Add `"!node_modules/**/*"` to `build.files` and set `build.npmRebuild: false` |
 | The main process loads **some** packages | Move the others from `dependencies` to `devDependencies` — still bundled, no longer shipped |
+| The packager's output folder is matched by `build.files` (both vite and electron-builder writing to `dist/`) | Set `build.directories.output` to a folder nothing packs. Then delete the old output folder and git-ignore the new one |
+
+The last one is independent of the other two and is applied on top of either. `verify` also
+fails when it finds a packed app (`win-unpacked/`, a nested `app.asar`…) inside the archive.
 
 The audit reads **what actually ships**. If your main entry is build output, build first; the kit
 refuses to guess from sources, because whether a bundler inlined a package is exactly the question.
@@ -93,6 +98,11 @@ const result = verifyPackage(findPackedAsar('/path/to/app'), audit)
 - **Packages loaded only through a path string** other than a preload (for example
   `fork('node_modules/x/cli.js')`). Pass the file with `--entry`, or keep the package.
 - **Nested `node_modules`** are attributed to the top-level package that contains them.
+- **A stale `node_modules`**: if package.json lists a package that was never installed, the
+  packager silently leaves it out. `audit` warns (`notInstalled`) and `verify` fails; run your
+  package manager's install before packing.
+- `fix --write` re-serialises package.json: indentation, line endings and the final newline are
+  kept, but objects written on one line are expanded.
 - It is a static reading. After a fix, **pack and launch the app once** — `verify` proves the
   archive is right, not that every code path runs.
 
