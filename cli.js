@@ -50,6 +50,9 @@ function printAudit(audit) {
   if (audit.undeclared.length > 0) {
     lines.push(`  ! loaded but not in dependencies: ${list(audit.undeclared)} — fine in dev, may be missing once packed`)
   }
+  if (audit.notInstalled.length > 0) {
+    lines.push(`  ! loaded by the main process but not installed here: ${list(audit.notInstalled)} — run your package manager's install before packing`)
+  }
   if (audit.dynamicLoads > 0) {
     lines.push(`  ! ${audit.dynamicLoads} load(s) use a computed name and could not be read — check those by hand before trusting this`)
   }

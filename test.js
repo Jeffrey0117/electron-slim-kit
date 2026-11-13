@@ -148,6 +148,27 @@ test('reports a package the main process loads that is not a production dependen
   assert.deepEqual(kit.auditProject(dir).undeclared, ['scheduler'])
 })
 
+test('a loaded package that is not installed is still required, and verify fails without it', () => {
+  // Real case: package.json gained a dependency, node_modules was never updated,
+  // the packer silently left it out — and a check that only knew about installed
+  // packages reported the archive as correct.
+  const files = { ...UNBUNDLED_MAIN }
+  delete files['node_modules/sharp/package.json']
+  delete files['node_modules/sharp/index.js']
+  const dir = project(files)
+  const audit = kit.auditProject(dir)
+
+  assert.deepEqual(audit.neededByMain, ['sharp'])
+  assert.deepEqual(audit.notInstalled, ['sharp'])
+  assert.ok(audit.keepPackages.includes('sharp'))
+
+  const asar = path.join(dir, 'release', 'win-unpacked', 'resources', 'app.asar')
+  writeAsar(asar, { 'package.json': 10 })
+  const result = kit.verifyPackage(asar, audit)
+  assert.deepEqual(result.missing, ['sharp'])
+  assert.equal(result.ok, false)
+})
+
 test('refuses to guess when the main entry has not been built', () => {
   const dir = project({ 'package.json': { name: 'x', main: 'dist-electron/main.js', dependencies: {} } })
   assert.throws(() => kit.auditProject(dir), /does not exist.*build the app first/s)

@@ -242,7 +242,12 @@ function auditProject(projectDir, opts = {}) {
     (name) => !declared.includes(name) && fs.existsSync(path.join(root, 'node_modules', name)),
   )
 
-  const keep = dependencyClosure(root, [...neededByMain, ...undeclared])
+  // A package the main process loads is needed whether or not it is installed
+  // here. Leaving it out because node_modules is stale would make a later
+  // `verify` pass on an app that cannot start.
+  const direct = [...neededByMain, ...undeclared]
+  const notInstalled = installed ? direct.filter((name) => !fs.existsSync(path.join(root, 'node_modules', name))) : []
+  const keep = new Set([...direct, ...dependencyClosure(root, direct)])
   const drop = new Set([...dependencyClosure(root, notLoadedByMain)].filter((name) => !keep.has(name)))
 
   return {
@@ -258,6 +263,7 @@ function auditProject(projectDir, opts = {}) {
     neededByMain,
     notLoadedByMain,
     undeclared,
+    notInstalled,
     usage: Object.fromEntries([...usage.entries()].map(([name, files]) => [name, [...new Set(files)]])),
     keepPackages: [...keep].sort(),
     dropPackages: [...drop].sort(),
