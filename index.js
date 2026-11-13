@@ -173,6 +173,37 @@ function mainEntryOf(pkg) {
   return pkg.build?.extraMetadata?.main ?? pkg.main ?? 'index.js'
 }
 
+const DEFAULT_OUTPUT_DIR = 'dist'
+
+/** Where electron-builder writes its output (its default is `dist`). */
+function outputDirOf(pkg) {
+  return String(pkg.build?.directories?.output ?? DEFAULT_OUTPUT_DIR).replace(/^\.\//, '').replace(/\/+$/, '')
+}
+
+/**
+ * True when the packager's output folder is itself matched by `build.files`.
+ * Then every build packs the previous build — the whole Electron runtime —
+ * into app.asar. Typical cause: vite and electron-builder both writing to `dist`.
+ */
+function outputIsPackedIntoApp(pkg) {
+  const patterns = pkg.build?.files
+  if (!Array.isArray(patterns)) return false
+  const output = outputDirOf(pkg)
+  return patterns.some((pattern) => {
+    if (typeof pattern !== 'string' || pattern.startsWith('!')) return false
+    const first = pattern.replace(/^\.\//, '').split('/')[0]
+    return first === output
+  })
+}
+
+/** A folder name for packager output that no `build.files` pattern can match. */
+function freeOutputDir(pkg) {
+  const taken = new Set(
+    (pkg.build?.files ?? []).filter((p) => typeof p === 'string').map((p) => p.replace(/^!/, '').replace(/^\.\//, '').split('/')[0]),
+  )
+  return ['release', 'release-app', 'packed'].find((name) => !taken.has(name)) ?? 'electron-out'
+}
+
 /**
  * Work out which production dependencies the Electron main process (and its
  * preload scripts) load at run time, by following imports from the entry point.
@@ -255,6 +286,8 @@ function auditProject(projectDir, opts = {}) {
     version: pkg.version ?? '',
     projectDir: root,
     builder: detectBuilder(pkg),
+    outputDir: outputDirOf(pkg),
+    outputPackedIntoApp: detectBuilder(pkg) === 'electron-builder' && outputIsPackedIntoApp(pkg),
     mainEntry: path.relative(root, mainEntry),
     preloads: [...preloads].sort(),
     scannedFiles: visited.size,
@@ -284,6 +317,30 @@ function sortKeys(object) {
  * package.json object — nothing is written and the input is not modified.
  */
 function planFix(audit) {
+  const plan = planDependencyFix(audit)
+  if (!audit.outputPackedIntoApp) return plan
+
+  // Independent of the dependency question: stop the build packing its own output.
+  const moveOutput = (pkg) => ({
+    ...pkg,
+    build: { ...pkg.build, directories: { ...pkg.build?.directories, output: freeOutputDir(pkg) } },
+  })
+  return {
+    kind: plan.kind === 'none' ? 'move-output' : plan.kind,
+    movesOutput: true,
+    reason:
+      plan.kind === 'none'
+        ? `The packager writes to "${audit.outputDir}", which build.files also packs — every build ships the previous build inside app.asar.`
+        : `${plan.reason} Also: the packager writes to "${audit.outputDir}", which build.files packs, so every build ships the previous build.`,
+    changes: [
+      ...plan.changes,
+      `build.directories.output: move packager output out of "${audit.outputDir}" (then delete the old output folder and git-ignore the new one)`,
+    ],
+    apply: (pkg) => moveOutput(plan.apply(pkg)),
+  }
+}
+
+function planDependencyFix(audit) {
   const none = (reason) => ({ kind: 'none', reason, changes: [], apply: (pkg) => pkg })
 
   if (audit.notLoadedByMain.length === 0) return none('Every production dependency is loaded by the main process.')
@@ -409,6 +466,29 @@ function inspectAsar(asarPath) {
   }
 }
 
+const PACKED_APP_FOLDER = /(?:^|\/)((?:win|linux)(?:-[a-z0-9]+)?-unpacked|mac(?:-[a-z0-9]+)?)\//
+
+/**
+ * A packaged app found *inside* the archive: the build packed its own previous
+ * output. Recognised by electron-builder's unpacked-app folder names, or by an
+ * app.asar nested in the archive.
+ */
+function findNestedOutput(entries) {
+  const folders = new Map()
+  for (const entry of entries) {
+    if (entry.path.startsWith('node_modules/')) continue
+    const match = entry.path.match(PACKED_APP_FOLDER)
+    const nestedArchive = /(?:^|\/)resources\/app\.asar$/.test(entry.path)
+    if (!match && !nestedArchive) continue
+    const folder = match ? entry.path.slice(0, match.index + match[0].length - 1) : entry.path
+    folders.set(folder, (folders.get(folder) ?? 0) + entry.size)
+  }
+  return {
+    folders: [...folders.keys()].sort(),
+    bytes: [...folders.values()].reduce((sum, size) => sum + size, 0),
+  }
+}
+
 /** Newest app.asar under the usual output folders, or null. */
 function findPackedAsar(projectDir) {
   const root = path.resolve(projectDir)
@@ -460,8 +540,10 @@ function verifyPackage(asarPath, audit) {
   const absent = audit.keepPackages.filter((name) => !shipped.includes(name) && !unpacked.has(name))
   const unexpected = shipped.filter((name) => !keep.has(name))
   const missing = absent.filter((name) => direct.has(name))
+  const nestedOutput = findNestedOutput(readAsarEntries(asarPath))
   return {
-    ok: unexpected.length === 0 && missing.length === 0,
+    ok: unexpected.length === 0 && missing.length === 0 && nestedOutput.bytes === 0,
+    nestedOutput,
     unexpected,
     unexpectedBytes: unexpected.reduce((sum, name) => sum + inspection.packages[name].bytes, 0),
     missing,

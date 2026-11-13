@@ -50,6 +50,9 @@ function printAudit(audit) {
   if (audit.undeclared.length > 0) {
     lines.push(`  ! loaded but not in dependencies: ${list(audit.undeclared)} — fine in dev, may be missing once packed`)
   }
+  if (audit.outputPackedIntoApp) {
+    lines.push(`  ! the packager writes to "${audit.outputDir}", which build.files also packs — each build ships the previous build inside app.asar`)
+  }
   if (audit.notInstalled.length > 0) {
     lines.push(`  ! loaded by the main process but not installed here: ${list(audit.notInstalled)} — run your package manager's install before packing`)
   }
@@ -105,6 +108,9 @@ function run(argv) {
   console.log(`  ${mb(inspection.fileBytes)} archive${unpackedNote} — ${inspection.files} files, ${Object.keys(inspection.packages).length} packages`)
   if (result.unexpected.length > 0) {
     console.log(`  ✗ shipped for nothing (${result.unexpected.length} packages, ${mb(result.unexpectedBytes)}): ${result.unexpected.slice(0, 12).join(', ')}${result.unexpected.length > 12 ? ', …' : ''}`)
+  }
+  if (result.nestedOutput.bytes > 0) {
+    console.log(`  ✗ a previous build is packed inside the archive (${mb(result.nestedOutput.bytes)}): ${result.nestedOutput.folders.slice(0, 4).join(', ')}`)
   }
   if (result.missing.length > 0) console.log(`  ✗ loaded by the main process but not packed: ${result.missing.join(', ')}`)
   if (result.missingTransitive.length > 0) {

@@ -58,7 +58,7 @@ const UNBUNDLED_MAIN = {
     main: 'electron/main.cjs',
     dependencies: { sharp: '^1', react: '^18', 'react-dom': '^18' },
     devDependencies: { 'electron-builder': '^26', vite: '^5' },
-    build: { files: ['dist/**/*', 'electron/**/*'] },
+    build: { files: ['dist/**/*', 'electron/**/*'], directories: { output: 'release' } },
   },
   'electron/main.cjs': "const { app } = require('electron')\nconst fs = require('node:fs')\nrequire('./lib/images.cjs')\n",
   'electron/lib/images.cjs': "const sharp = require('sharp')\nmodule.exports = sharp\n",
@@ -307,6 +307,85 @@ test('flags packages that shipped for nothing, and ones the app needs that are a
   // …unless it is a native module unpacked next to the archive
   fs.mkdirSync(`${asar}.unpacked/node_modules/sharp`, { recursive: true })
   assert.equal(kit.verifyPackage(asar, audit).ok, true)
+})
+
+// ── the build packing its own output ──
+
+const SELF_PACKING = {
+  'package.json': {
+    name: 'viewer',
+    main: 'electron/main.cjs',
+    dependencies: {},
+    devDependencies: { 'electron-builder': '^26', vite: '^5' },
+    // vite writes to dist/, and electron-builder's default output is dist/ too
+    build: { files: ['dist/**/*', 'electron/**/*'] },
+  },
+  'electron/main.cjs': "require('electron')\n",
+}
+
+test('notices when the packager output folder is itself packed into the app', () => {
+  const audit = kit.auditProject(project(SELF_PACKING))
+  assert.equal(audit.outputDir, 'dist')
+  assert.equal(audit.outputPackedIntoApp, true)
+
+  const separate = project({
+    ...SELF_PACKING,
+    'package.json': { ...SELF_PACKING['package.json'], build: { files: ['dist/**/*'], directories: { output: 'release' } } },
+  })
+  assert.equal(kit.auditProject(separate).outputPackedIntoApp, false)
+
+  const excluded = project({
+    ...SELF_PACKING,
+    'package.json': { ...SELF_PACKING['package.json'], build: { files: ['electron/**/*', '!dist/**/*'] } },
+  })
+  assert.equal(kit.auditProject(excluded).outputPackedIntoApp, false)
+})
+
+test('moves the packager output to a folder nothing packs, on top of any dependency fix', () => {
+  const dir = project(SELF_PACKING)
+  const plan = kit.planFix(kit.auditProject(dir))
+  assert.equal(plan.kind, 'move-output')
+  const after = plan.apply(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')))
+  assert.equal(after.build.directories.output, 'release')
+  assert.deepEqual(after.build.files, ['dist/**/*', 'electron/**/*'])
+
+  // combined with a dependency fix, and avoiding a name that build.files already uses
+  const both = project({
+    ...SELF_PACKING,
+    'package.json': {
+      ...SELF_PACKING['package.json'],
+      dependencies: { react: '^18' },
+      build: { files: ['dist/**/*', 'release/**/*'] },
+    },
+  })
+  const combined = kit.planFix(kit.auditProject(both))
+  assert.equal(combined.kind, 'exclude-all')
+  assert.equal(combined.movesOutput, true)
+  const merged = combined.apply(JSON.parse(fs.readFileSync(path.join(both, 'package.json'), 'utf8')))
+  assert.equal(merged.build.directories.output, 'release-app')
+  assert.ok(merged.build.files.includes('!node_modules/**/*'))
+})
+
+test('verify fails when a previous build is packed inside the archive', () => {
+  const dir = project(SELF_PACKING)
+  const audit = kit.auditProject(dir)
+  const asar = path.join(dir, 'dist', 'win-unpacked', 'resources', 'app.asar')
+
+  writeAsar(asar, {
+    'dist/index.html': 500,
+    'dist/win-unpacked/electron.exe': 180_000_000,
+    'dist/win-unpacked/resources/app.asar': 1_000_000,
+    'electron/main.cjs': 300,
+  })
+  const nested = kit.verifyPackage(asar, audit)
+  assert.equal(nested.ok, false)
+  assert.deepEqual(nested.nestedOutput.folders, ['dist/win-unpacked'])
+  assert.equal(nested.nestedOutput.bytes, 181_000_000)
+
+  writeAsar(asar, { 'dist/index.html': 500, 'electron/main.cjs': 300 })
+  const clean = kit.verifyPackage(asar, audit)
+  assert.equal(clean.nestedOutput.bytes, 0)
+  assert.equal(clean.ok, true)
 })
 
 test('says so plainly when the file is not an asar archive', () => {
